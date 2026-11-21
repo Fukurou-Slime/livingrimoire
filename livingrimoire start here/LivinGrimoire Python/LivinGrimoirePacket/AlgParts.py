@@ -1,0 +1,212 @@
+from collections import deque
+
+from LivinGrimoirePacket.AXPython import Responder, TimeGate
+from LivinGrimoirePacket.LivinGrimoire import AlgPart, Brain, Skill
+
+
+class APSleep(AlgPart):
+    def __init__(self, wakeners, sleep_minutes):
+        super().__init__()  # Call the constructor of the parent class (AlgPart)
+        self.wakeners: Responder = wakeners
+        self.done: bool = False
+        self.timeGate: TimeGate = TimeGate(sleep_minutes)
+        self.timeGate.openForPauseMinutes()
+
+    def action(self, ear, skin, eye):
+        if self.wakeners.responsesContainsStr(ear) or self.timeGate.isClosed():
+            self.done = True
+            return "i am awake"
+        if ear:
+            return "zzz"
+        return ""
+
+    def completed(self):
+        return self.done
+
+
+class APSay(AlgPart):
+    def __init__(self, at: int, param: str) -> None:
+        super().__init__()
+        if at > 10:
+            at = 10
+        self.at = at
+        self.param = param
+
+    def action(self, ear: str, skin: str, eye: str) -> str:
+        """TODO Auto-generated method stub"""
+        axnStr = ""
+        if self.at > 0:
+            if ear.lower() != self.param.lower():
+                axnStr = self.param
+                self.at -= 1
+        return axnStr
+
+    def completed(self) -> bool:
+        return self.at < 1
+
+
+class APMad(AlgPart):
+    def __init__(self, *sentences: str):
+        super().__init__()
+        self.sentences = deque(sentences)
+        # Handle the case where a single list is passed (like the ArrayList constructor in Java)
+        if len(sentences) == 1 and isinstance(sentences[0], list):
+            self.sentences = deque(sentences[0])
+
+    def action(self, ear: str, skin: str, eye: str) -> str:
+        # Use deque.popleft() safely without try-except
+        return self.sentences.popleft() if self.sentences else ""
+
+    def completed(self) -> bool:
+        return not self.sentences
+
+
+class APShy(AlgPart):
+    def __init__(self, *sentences: str):
+        super().__init__()
+        self.sentences = deque(sentences)
+        # Handle the case where a single list is passed (like the ArrayList constructor in Java)
+        if len(sentences) == 1 and isinstance(sentences[0], list):
+            self.sentences = deque(sentences[0])
+
+    def action(self, ear: str, skin: str, eye: str) -> str:
+        # Use deque.popleft() safely without try-except
+        return self.sentences.popleft() if self.sentences else ""
+
+    def completed(self) -> bool:
+        return not self.sentences
+
+
+class APHappy(AlgPart):
+    def __init__(self, *sentences: str):
+        super().__init__()
+        self.sentences = deque(sentences)
+        # Handle the case where a single list is passed (like the ArrayList constructor in Java)
+        if len(sentences) == 1 and isinstance(sentences[0], list):
+            self.sentences = deque(sentences[0])
+
+    def action(self, ear: str, skin: str, eye: str) -> str:
+        # Use deque.popleft() safely without try-except
+        return self.sentences.popleft() if self.sentences else ""
+
+    def completed(self) -> bool:
+        return not self.sentences
+
+
+class APSad(AlgPart):
+    def __init__(self, *sentences: str):
+        super().__init__()
+        self.sentences = deque(sentences)
+        # Handle the case where a single list is passed (like the ArrayList constructor in Java)
+        if len(sentences) == 1 and isinstance(sentences[0], list):
+            self.sentences = deque(sentences[0])
+
+    def action(self, ear: str, skin: str, eye: str) -> str:
+        # Use deque.popleft() safely without try-except
+        return self.sentences.popleft() if self.sentences else ""
+
+    def completed(self) -> bool:
+        return not self.sentences
+
+
+class APSkillRemover(AlgPart):
+    def __init__(self, brain:Brain, skill_to_remove:Skill):
+        super().__init__()
+        self.brain = brain
+        self.skill_to_remove = skill_to_remove
+        self.done = False
+
+    def action(self, ear: str, skin: str, eye: str) -> str:
+        self.brain.remove_skill(self.skill_to_remove)
+        self.done = True
+        return ""
+
+    def completed(self) -> bool:
+        return self.done
+
+
+class APSkillAdder(AlgPart):
+    def __init__(self, brain: Brain, skill_to_add: Skill):
+        super().__init__()
+        self.brain = brain
+        self.skill_to_add = skill_to_add
+        self.done = False
+
+    def action(self, ear: str, skin: str, eye: str) -> str:
+        self.brain.add_skill(self.skill_to_add)
+        self.done = True
+        return ""
+
+    def completed(self) -> bool:
+        return self.done
+
+
+class APSkillSwapper(AlgPart):
+    def __init__(self, brain: Brain, skill_to_remove: Skill, skill_to_add: Skill):
+        super().__init__()
+        self.brain = brain
+        self.skill_to_remove = skill_to_remove
+        self.skill_to_add = skill_to_add
+        self.done = False
+
+    def action(self, ear: str, skin: str, eye: str) -> str:
+        self.brain.remove_skill(self.skill_to_remove)
+        self.brain.add_skill(self.skill_to_add)
+        self.done = True
+        return ""
+
+    def completed(self) -> bool:
+        return self.done
+
+
+class APSkillsAdder(AlgPart):
+    def __init__(self, brain: Brain, *skills_to_add: Skill):
+        super().__init__()
+        self.brain = brain
+        self.skills_to_add: tuple[Skill, ...] = skills_to_add
+        self.done = False
+
+    def action(self, ear: str, skin: str, eye: str) -> str:
+        for skill in self.skills_to_add:
+            self.brain.add_skill(skill)
+        self.done = True
+        return ""
+
+    def completed(self) -> bool:
+        return self.done
+
+
+class APSkillsRemover(AlgPart):
+    def __init__(self, brain: Brain, *skills_to_remove: Skill):
+        super().__init__()
+        self.brain = brain
+        self.skills_to_remove: tuple[Skill, ...] = skills_to_remove
+        self.done = False
+
+    def action(self, ear: str, skin: str, eye: str) -> str:
+        for skill in self.skills_to_remove:
+            self.brain.remove_skill(skill)
+        self.done = True
+        return ""
+
+    def completed(self) -> bool:
+        return self.done
+
+
+class APAddUniqueSkills(AlgPart):
+    # adds skills to the brain, skipping any that already exist in any lobe
+    def __init__(self, brain: Brain, *skills_to_add: Skill):
+        super().__init__()
+        self.brain = brain
+        self.skills_to_add: list[Skill] = list(skills_to_add)
+        self.done = False
+
+    def action(self, ear: str, skin: str, eye: str) -> str:
+        for skill in self.skills_to_add:
+            if not self.brain.contains_skill(skill):
+                self.brain.add_skill(skill)
+        self.done = True
+        return ""
+
+    def completed(self) -> bool:
+        return self.done

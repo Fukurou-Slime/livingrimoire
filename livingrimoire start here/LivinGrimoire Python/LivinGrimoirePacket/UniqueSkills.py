@@ -1,0 +1,458 @@
+from LivinGrimoirePacket.AXPython import TimedMessages, SkillHubAlgDispenser, AXLearnability, AlgorithmV2, \
+    UniqueResponder, AXSkillBundle, AXGamification, Responder
+from LivinGrimoirePacket.AlgParts import APSad
+from LivinGrimoirePacket.LivinGrimoire import Skill, Kokoro, AbsDictionaryDB, Neuron, Lobe, Brain
+from pathlib import Path
+
+
+class DiBicameral(Skill):
+    def __init__(self):
+        super().__init__()
+        self.msgCol: TimedMessages = TimedMessages()
+
+    def input(self, ear, skin, eye):
+        self.msgCol.tick()
+        if self.getKokoro().toHeart.get("dibicameral") != "null":
+            self.getKokoro().toHeart["dibicameral"] = "null"
+        if self.msgCol.getMsg():
+            temp = self.msgCol.getLastMSG()
+            if "#" not in temp:
+                self.setSimpleAlg(temp)
+            else:
+                self.getKokoro().toHeart["dibicameral"] = temp.replace("#", "")
+
+    def setKokoro(self, kokoro: Kokoro):
+        self._kokoro = kokoro
+        self.getKokoro().toHeart["dibicameral"] = "null"
+
+    def skillNotes(self, param: str) -> str:
+        if param == "notes":
+            return "used to centralize triggers for multiple skills. see Bicameral Mind wiki for more."
+        elif param == "triggers":
+            return "fully automatic skill"
+        return "note unavailable"
+
+
+class SkillBranch(Skill):
+    # unique skill used to bind similar skills
+    """
+    * contains collection of skills
+    * mutates active skill if detects conjuration
+    * mutates active skill if algorithm results in
+    * negative feedback
+    * positive feedback negates active skill mutation
+    * """
+
+    def __init__(self, tolerance):
+        super().__init__()
+        self._skillRef: dict[str, int] = {}
+        self._skillHub: SkillHubAlgDispenser = SkillHubAlgDispenser()
+        self._ml: AXLearnability = AXLearnability(tolerance)
+        self._kokoro: Kokoro = Kokoro(AbsDictionaryDB())
+
+    def setKokoro(self, kokoro):
+        super().setKokoro(kokoro)
+        self._skillHub.set_kokoro(kokoro)
+
+    def input(self, ear, skin, eye):
+        # conjuration alg morph
+        if ear in self._skillRef:
+            self._skillHub.setActiveSkillWithMood(self._skillRef[ear])
+            self.setSimpleAlg("hmm")
+        # machine learning alg morph
+        if self._ml.mutateAlg(ear):
+            self._skillHub.cycleActiveSkill()
+            self.setSimpleAlg("hmm")
+        # alg engage
+        a1: AlgorithmV2 = self._skillHub.dispenseAlgorithm(ear, skin, eye)
+        if a1:
+            self.setOutalg(a1.get_alg(), a1.get_priority())
+            self._ml.pendAlg()
+
+    def addSkill(self, skill):
+        self._skillHub.addSkill(skill)
+
+    def addReferencedSkill(self, skill, conjuration):
+        # the conjuration string will engage it's respective skill
+        self._skillHub.addSkill(skill)
+        self._skillRef[conjuration] = self._skillHub.getSize()
+
+    # learnability params
+    def addDefcon(self, defcon):
+        self._ml.defcons.add(defcon)
+
+    def addGoal(self, goal):
+        self._ml.goals.add(goal)
+
+    # while alg is pending, cause alg mutation ignoring learnability tolerance:
+    def addDefconLV5(self, defcon5):
+        self._ml.defcon5.add(defcon5)
+
+    def skillNotes(self, param: str) -> str:
+        return self._skillHub.active_skill_ref().skillNotes(param)
+
+class SkillBranch1Liner(SkillBranch):
+    def __init__(self, goal, defcon, tolerance, *skills):
+        super().__init__(tolerance)
+        self.addGoal(goal)
+        self.addDefcon(defcon)
+        for skill in skills:
+            self.addSkill(skill)
+
+
+class DiSkillBundle(Skill):
+    def __init__(self):
+        super().__init__()
+        self.axSkillBundle: AXSkillBundle = AXSkillBundle()
+        self.notes : dict[str, UniqueResponder] = {"triggers": UniqueResponder()}
+
+    def input(self, ear, skin, eye):
+        a1 = self.axSkillBundle.dispense_algorithm(ear, skin, eye)
+        if a1 is None:
+            return
+        self._outAlg = a1.get_alg()
+        self._outpAlgPriority = a1.get_priority()
+
+    def setKokoro(self, kokoro):
+        super().setKokoro(kokoro)
+        self.axSkillBundle.set_kokoro(kokoro)
+
+    def add_skill(self, skill):
+        self.axSkillBundle.add_skill(skill)
+        for i in range(10):
+            self.notes["triggers"].addResponse(f'grind {skill.skillNotes("triggers")}')
+
+    def skillNotes(self, param: str) -> str:
+        if param in self.notes:
+            return self.notes[param].getAResponse()
+        return "notes unavailable"
+
+    def setDefaultNote(self):
+        self.notes["notes"] = UniqueResponder("a bundle of several skills")
+
+    def manualAddResponse(self, key:str, value: str):
+        if key not in self.notes:
+            self.notes[key] = UniqueResponder(value)
+        self.notes[key].addResponse(value)
+
+
+class GamiPlus(Skill):
+    def __init__(self, skill: Skill, ax_gamification: AXGamification, gain: int):
+        super().__init__()
+        self.skill: Skill = skill
+        self.ax_gamification: AXGamification = ax_gamification
+        self.gain: int = gain
+
+    def input(self, ear, skin, eye):
+        self.skill.input(ear, skin, eye)
+
+    def output(self, noiron: Neuron):
+        # Skill activation increases gaming credits
+        if self.skill.pendingAlgorithm():
+            self.ax_gamification.incrementBy(self.gain)
+        self.skill.output(noiron)
+
+    def setKokoro(self, kokoro: Kokoro):
+        self.skill.setKokoro(kokoro)
+
+
+class GamiMinus(Skill):
+    def __init__(self, skill: Skill, ax_gamification: AXGamification, cost: int):
+        super().__init__()
+        self.skill: Skill = skill
+        self.ax_gamification: AXGamification = ax_gamification
+        self.cost: int = cost
+
+    def input(self, ear, skin, eye):
+        # Engage skill only if a reward is possible
+        if self.ax_gamification.surplus(self.cost):
+            self.skill.input(ear, skin, eye)
+
+    def output(self, noiron: Neuron):
+        # Charge reward if an algorithm is pending
+        if self.skill.pendingAlgorithm():
+            self.ax_gamification.reward(self.cost)
+            self.skill.output(noiron)
+
+    def setKokoro(self, kokoro: Kokoro):
+        self.skill.setKokoro(kokoro)
+
+
+class DiGamificationSkillBundle(DiSkillBundle):
+    def __init__(self):
+        super().__init__()
+        self.ax_gamification: AXGamification = AXGamification()
+        self.gain: int = 1
+        self.cost: int = 2
+
+    def set_gain(self, gain):
+        if gain > 0:
+            self.gain = gain
+
+    def set_cost(self, cost):
+        if cost > 0:
+            self.cost = cost
+
+    def add_grind_skill(self, skill):
+        self.axSkillBundle.add_skill(GamiPlus(skill, self.ax_gamification, self.gain))
+        for i in range(10):
+            self.notes["triggers"].addResponse(f'grind {skill.skillNotes("triggers")}')
+
+    def add_costly_skill(self, skill):
+        self.axSkillBundle.add_skill(GamiMinus(skill, self.ax_gamification, self.cost))
+        for i in range(10):
+            self.notes["triggers"].addResponse(f'grind {skill.skillNotes("triggers")}')
+
+    def getAxGamification(self) -> AXGamification:
+        return self.ax_gamification
+
+    def setDefaultNote(self):
+        self.notes["notes"] = UniqueResponder("a bundle of grind and reward skills")
+
+
+class DiGamificationScouter(Skill):
+    def __init__(self, ax_gamification):
+        super().__init__()
+        self.lim: int = 2  # minimum for mood
+        self.ax_gamification: AXGamification = ax_gamification
+        self.no_mood: Responder = Responder("bored", "no emotions detected", "neutral")
+        self.yes_mood: Responder = Responder("operational", "efficient", "mission ready", "awaiting orders")
+
+    def set_lim(self, lim):
+        self.lim = lim
+
+    def input(self, ear, skin, eye):
+        if ear != "how are you":
+            return
+        if self.ax_gamification.getCounter() > self.lim:
+            self.setSimpleAlg(self.yes_mood.getAResponse())
+        else:
+            self.algPartsFusion(4, APSad(self.no_mood.getAResponse()))
+
+    def skillNotes(self, param: str) -> str:
+        if param == "notes":
+            return "Determines mood based on gamification counter and responds accordingly."
+        elif param == "triggers":
+            return "Triggered by the phrase 'how are you'. Adjusts mood response based on gamification counter."
+        return "Note unavailable"
+
+
+class DiImprint(Skill):
+    """
+    Loads kiln.txt and processes each line as a thought,
+    imprinting the bot with pre-written content or training data.
+    add skill:
+        brain.add_skill(DiImprint(brain))
+    ignores comment code lines(lines that start with #)
+    """
+
+    def __init__(self, brain: Brain):
+        super().__init__()
+        self.lobe: Lobe = brain.logicLobe
+
+    def manifest(self):
+        """Runs once when skill is added to the AI. Creates empty kiln.txt if it doesn't exist."""
+        Path('kiln.txt').touch(exist_ok=True)
+
+    def input(self, ear: str, skin: str, eye: str):
+        if ear == "imprint":
+            self.imprint()
+            self.setSimpleAlg("imprinting complete")
+
+    def imprint(self):
+        with open('kiln.txt', 'r') as file:
+            lines = file.readlines()
+
+        # Remove trailing whitespace and skip blank lines and comments
+        lines = [line.strip() for line in lines]
+
+        for line in lines:
+            if not line or line.startswith('#'):
+                continue
+            self.lobe.think(line, "", "")
+
+    # noinspection PyMethodMayBeStatic
+    def skill_notes(self, param: str) -> str:
+        if param == "notes":
+            return "Loads kiln.txt and processes each line as a thought"
+        elif param == "triggers":
+            return "Triggered by the command 'imprint'."
+        return "Note unavailable"
+
+
+class DiImprint_recorder(Skill):
+    #  records imprint file, complementary skill for DiImprint
+    def __init__(self):
+        super().__init__()
+        self.recording: bool = False
+
+    def input(self, ear: str, skin: str, eye: str):
+        if len(ear) == 0:
+            return
+        match ear:
+            case "recorder on" | "you are a clone" | "start recording":
+                self.recording = True
+                self.setSimpleAlg("recording input")
+                return
+            case "stop recording":
+                self.recording = False
+                self.setSimpleAlg("recording stopped")
+                return
+            case _:
+                pass
+        if self.recording:
+            self.record(ear)
+
+    @staticmethod
+    def record(ear):
+        with open("kiln.txt", "a") as file:
+            file.write(f"\n{ear}")
+
+    # noinspection PyMethodMayBeStatic
+    def skill_notes(self, param: str) -> str:
+        if param == "notes":
+            return "Records inputs to kiln text file"
+        elif param == "triggers":
+            return "Activated by verbal commands like 'recorder on'. stop recording to stop."
+        return "Note unavailable"
+
+
+class DiCMD(Skill):
+    # this class passes preset commands to the kokoro object, to be used by other skills.
+    # it's a middleman passing messages for example from a logical skill to a hardware skill
+    # see DiKokoroOut for example usage
+    def __init__(self):
+        super().__init__()
+        self.modes = set()
+
+    def addModes(self, *modes: str):
+        for m in modes:
+            if isinstance(m, str):
+                self.modes.add(m)
+        return self
+
+    # Override
+    def input(self, ear: str, skin: str, eye: str):
+        self._kokoro.toHeart["cmd"] = ""
+        if ear in self.modes:
+            self._kokoro.toHeart["cmd"] = ear
+
+    def skillNotes(self, param: str) -> str:
+        if param == "notes":
+            return "sends commands via the kokoro object to other skills"
+        elif param == "triggers":
+            return "anything in the hashset attribute"
+        return "note unavalible"
+
+class DiKokoroOut(Skill):
+    # example utilization of DiCMD
+    def __init__(self):
+        super().__init__()
+        self.set_skill_type(2)  # continuous skill
+        self.set_skill_lobe(2)  # hardware lobe
+
+    def input(self, ear: str, skin: str, eye: str):
+        t = self._kokoro.toHeart["cmd"]
+        if len(t)>0:
+            print(t)
+
+    def skillNotes(self, param: str) -> str:
+        if param == "notes":
+            return "prints to console"
+        elif param == "triggers":
+            return "automatic for any input"
+        return "note unavalible"
+
+
+class DiFunnel(Skill):
+    # default skill for EvoChain
+    # it simply passes the input onwards
+    def __init__(self):
+        super().__init__()
+
+    # Override
+    def input(self, ear: str, skin: str, eye: str):
+        self.setSimpleAlg(ear)
+
+class Shinka(Skill):
+    """
+    this is a zipped skill, in which newly added skills have override priority
+    to be active.
+    this is a skill bundle acting as a single skill.
+    """
+
+    def __init__(self, *skills: Skill):
+        super().__init__()
+        self.upgrades: list[Skill] = []
+        if not skills:
+            self.upgrades.append(DiFunnel())
+        else:
+            for skill in skills:
+                self.upgrades.append(skill)
+        self.active_upgrade = 0
+
+    def add_skill(self, skill: Skill):
+        if skill.get_skill_type() == 2:  # skip continuous skills:
+            return
+        skill.setKokoro(self.getKokoro())
+        self.upgrades.append(skill)
+
+    def input(self, ear: str, skin: str, eye: str):
+        for i, upgrade in enumerate(reversed(self.upgrades)):
+            idx = len(self.upgrades) - 1 - i
+            upgrade.input(ear, skin, eye)
+            if upgrade.pendingAlgorithm():
+                self.active_upgrade = idx
+                return
+
+    def setKokoro(self, kokoro: Kokoro):
+        self._kokoro = kokoro  # potential usage in sub classes for runtime upgrades mode.
+        for upgrade in self.upgrades:
+            upgrade.setKokoro(kokoro)
+
+    def pendingAlgorithm(self) -> bool:
+        return self.upgrades[self.active_upgrade].pendingAlgorithm()
+
+    def output(self, neuron: Neuron):
+        self.upgrades[self.active_upgrade].output(neuron)
+        self.active_upgrade = 0
+
+    def skillNotes(self, param: str) -> str:
+        return self.upgrades[self.active_upgrade].skillNotes(param)
+
+
+class Grimoire(Skill):
+    """
+    this skill lets you package a bunch of skills, either by passing them to the
+    constructor or by appending to self.skills in a subclass.
+    after adding them it removes itself from the brain.
+    the input method therefore never runs.
+    skills already in the brain are not added twice.
+
+    example, one-off bundle:
+        brain.add_skill(Grimoire(brain, DiHelloWorld(), DiSysOut()))
+
+    example, subclass (varargs):
+        class HelloPack(Grimoire):
+            def __init__(self, brain: Brain):
+                super().__init__(brain, DiHelloWorld(), DiSysOut())
+
+        brain.add_skill(HelloPack(brain))
+
+    example, subclass (append):
+        class HelloPack(Grimoire):
+            def __init__(self, brain: Brain):
+                super().__init__(brain)
+                self.skills.append(DiHelloWorld())
+                self.skills.append(DiSysOut())
+    """
+    def __init__(self, brain: Brain, *skills: Skill):
+        super().__init__()
+        self.skills: list[Skill] = list(skills)
+        self.brain = brain
+
+    def manifest(self):
+        for skill in self.skills:
+            if not self.brain.contains_skill(skill):
+                self.brain.add_skill(skill)
+        self.brain.remove_skill(self)

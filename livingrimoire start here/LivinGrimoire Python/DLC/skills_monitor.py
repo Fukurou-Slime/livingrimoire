@@ -1,0 +1,761 @@
+from __future__ import annotations
+
+import random
+
+from LivinGrimoirePacket.AXPython import Responder, AXFunnel, UniqueRandomGenerator, AXPassword, TrgEveryNMinutes, \
+    MonthlyTrigger, AXLearnability, TimeGate, AXStandBy, TimeUtils
+from LivinGrimoirePacket.AlgParts import APHappy, APSkillRemover, APSkillAdder, APSkillsRemover, APSkillsAdder, \
+    APAddUniqueSkills
+from LivinGrimoirePacket.LivinGrimoire import Skill, Lobe, Brain, AlgPart, DiSysOut, APVerbatim
+
+
+# ╔════════════════════════════════════════════════╗
+# ║                OVERUSED SKILLS                 ║
+# ╚════════════════════════════════════════════════╝
+
+
+class AHNight(Skill):
+    # this skill swaps between two sets of contradicting skills
+    # hidden skills are enabled at night
+    # negation skills(if any) are enabled for daytime
+    def __init__(self, brain: Brain, *hidden_skills:Skill):
+        super().__init__()
+        self.hidden_skills: list[Skill] = list(hidden_skills)
+        self.brain = brain
+        self.engaged:bool =False
+
+    def _load_skills(self, skills:list[Skill]):
+        for skill in skills:
+            self.brain.add_skill(skill)
+
+    def _remove_skills(self, skills:list[Skill]):
+        for skill in skills:
+            self.brain.remove_skill(skill)
+
+    def manifest(self):
+        if TimeUtils.isNight():
+            self._load_skills(self.hidden_skills)
+            self.engaged = True
+        else:
+            self.engaged = False
+
+    def ghost(self):
+        if self.engaged:
+            self._remove_skills(self.hidden_skills)
+
+    def input(self, ear: str, skin: str, eye: str):
+        if TimeUtils.isNight():
+            if not self.engaged:
+                self.algPartsFusion(3,APSkillsAdder(self.brain,*self.hidden_skills))
+                self.engaged = True
+        elif self.engaged:
+            self.algPartsFusion(3, APSkillsRemover(self.brain,*self.hidden_skills))
+            self.engaged = False
+
+
+    def skillNotes(self, param: str) -> str:
+        if param == "notes":
+            return "enables night time behavior"
+        elif param == "triggers":
+            return f"fully automatic"
+        return "note unavailable"
+
+
+class AHDay(Skill):
+    # this skill enables day skills during daytime
+    # day skills are removed at nighttime
+    def __init__(self, brain: Brain, *day_skills: Skill):
+        super().__init__()
+        self.day_skills: list[Skill] = list(day_skills)
+        self.brain = brain
+        self.engaged: bool = False
+
+    def _load_skills(self, skills: list[Skill]):
+        for skill in skills:
+            self.brain.add_skill(skill)
+
+    def _remove_skills(self, skills: list[Skill]):
+        for skill in skills:
+            self.brain.remove_skill(skill)
+
+    def manifest(self):
+        # load day skills if daytime, mark disengaged if night
+        if not TimeUtils.isNight():
+            self._load_skills(self.day_skills)
+            self.engaged = True
+        else:
+            self.engaged = False
+
+    def ghost(self):
+        # remove day skills if engaged
+        if self.engaged:
+            self._remove_skills(self.day_skills)
+
+    def input(self, ear: str, skin: str, eye: str):
+        if not TimeUtils.isNight():
+            # daytime and not yet engaged: add day skills
+            if not self.engaged:
+                self.algPartsFusion(3, APSkillsAdder(self.brain, *self.day_skills))
+                self.engaged = True
+        elif self.engaged:
+            # nighttime and still engaged: remove day skills
+            self.algPartsFusion(3, APSkillsRemover(self.brain, *self.day_skills))
+            self.engaged = False
+
+
+class AHAware(Skill):
+    # extracts meta data for equipped skills
+    def __init__(self, brain: Brain, name: str, summoner="user"):
+        super().__init__()
+        self.lobe: Lobe = brain.logicLobe
+        self.brain: Brain = brain
+        self.name: str = name
+        self.summoner: str = summoner
+        self.skills: list[str] = []
+        self.replies: Responder = Responder("Da, what's happening?", f'You speak to {self.name}?',
+                                            f"Slav {self.name} at your service!", "What's cooking, comrade?",
+                                            f"{self.name} is listening!", "Yes, babushka?",
+                                            f"Who summons the {self.name}?", "Speak, friend, and enter!",
+                                            f"{self.name} hears you loud and clear!", "What's on the menu today?",
+                                            "Ready for action, what's the mission?",
+                                            f"{self.name}'s here, what's the party?",
+                                            f"did someone call for a {self.name}?", "Adventure time, or nap time?",
+                                            "Reporting for duty, what's the quest?",
+                                            f"{self.name}'s in the house, what's up?",
+                                            "Is it time for vodka and dance?", f"{self.name}'s ready, what's the plan?",
+                                            f"Who dares to disturb the mighty {self.name}?",
+                                            "What's the buzz, my spud?", "Is it a feast, or just a tease?",
+                                            f"{self.name}'s awake, what's at stake?", "What's the word, bird?",
+                                            "Is it a joke, or are we broke?",
+                                            f"{self.name}'s curious, what's so serious?",
+                                            "Is it a game, or something lame?", "What's the riddle, in the middle?",
+                                            f"{self.name}'s all ears, what's the cheers?",
+                                            "Is it a quest, or just a test?", "What's the gig, my twig?",
+                                            "Is it a prank, or am I high rank?", "What's the scoop, my group?",
+                                            "Is it a tale, or a sale?", "What's the drill, my thrill?",
+                                            "Is it a chat, or combat?", "What's the plot, my tot?",
+                                            "Is it a trick, or something slick?", "What's the deal, my peel?",
+                                            "Is it a race, or just a chase?", "What's the story, my glory?")
+        self.ggReplies: Responder = Responder("meow", "oooweee", "chi", "yes i am", "nuzzles you", "thanks", "prrr")
+        self._call: str = f'hey {self.name}'
+        self._ggFunnel: AXFunnel = AXFunnel("good girl")
+        self._ggFunnel.addK("what can you do").addK("skill triggers").addK("remove skill").addK("restore skills") \
+            .addK("what is your name").addK("name summoner").addK("how do you feel").addK(self.name).addK("test") \
+            .addK("good girl").addK(self._call)
+        self.skillDex = None
+        self.skill_for_info: int = 0
+        self._removedSkills: list[Skill] = []
+
+    def input(self, ear, skin, eye):
+        match self._ggFunnel.funnel(ear):
+            case "what can you do":
+                if self.skillDex is None:
+                    self.skillDex = UniqueRandomGenerator(len(self.lobe.get_skill_list()))
+                self.skill_for_info = self.skillDex.get_unique_random()
+                self.setSimpleAlg(f'{self.lobe.dClasses[self.skill_for_info].__class__.__name__} {self.lobe.dClasses[self.skill_for_info].skillNotes("notes")}')
+            case "skill triggers":
+                self.setSimpleAlg(self.lobe.dClasses[self.skill_for_info].skillNotes("triggers"))
+            case "remove skill":
+                skillToRemove = self.lobe.dClasses[self.skill_for_info]
+                self._removedSkills.append(skillToRemove)
+                self.skillDex = None
+                self.skill_for_info = 0
+                self.algPartsFusion(4, APSkillRemover(self.brain, skillToRemove))
+                self.setSimpleAlg("skill removed")
+            case "restore skills":
+                parts = [APSkillAdder(self.brain, skill) for skill in self._removedSkills]
+                self._removedSkills.clear()
+                self.algPartsFusion(4, *parts)
+                self.setSimpleAlg("all skills have been restored")
+            case "what is your name":
+                self.setSimpleAlg(self.name)
+            case "name summoner":
+                self.setSimpleAlg(self.summoner)
+            case "how do you feel":
+                self.getKokoro().toHeart["last_ap"] = self.lobe.getSoulEmotion()
+            case self.name:
+                self.setSimpleAlg(self.replies.getAResponse())
+            case "test":
+                self.setSimpleAlg(self.replies.getAResponse())
+            case "good girl":
+                self.algPartsFusion(4, APHappy(self.ggReplies.getAResponse()))
+            case self._call:
+                self.setSimpleAlg(self.replies.getAResponse())
+
+
+class AHPassword(Skill):
+    # this skill swaps between two sets of contradicting skills
+    def __init__(self, brain: Brain):
+        super().__init__()
+        self.hidden_skills: list[Skill] = []
+        self.negation_skills: list[Skill] = []
+        self.pass_gate: AXPassword = AXPassword()
+        self.brain = brain
+        self.reset_gate: TrgEveryNMinutes = TrgEveryNMinutes(10)
+        self.bond = MonthlyTrigger()
+        self.funnel = AXFunnel(default="bye")
+        self.funnel.addK("close gate").addK("bye bye")
+
+    def add_hidden_skill(self, skill: Skill) -> AHPassword:
+        self.hidden_skills.append(skill)
+        return self
+
+    def add_negation_skill(self, skill: Skill) -> AHPassword:
+        self.negation_skills.append(skill)
+        return self
+
+    @staticmethod
+    def to_int(s: str, default):
+        s = s.strip()
+        if s.startswith("-") and s[1:].isdigit():
+            return -int(s[1:])
+        if s.isdigit():
+            return int(s)
+        return default
+
+    def manifest(self):
+        code = self.to_int(self._kokoro.grimoireMemento.load(f"{self.skill_name}_code"), 0)
+        self.pass_gate.openGate('code 0')
+        self.pass_gate.codeUpdate(f'code {code}')
+        self.pass_gate.closeGate()
+
+    def input(self, ear: str, skin: str, eye: str):
+        if self.bond.tick():
+            self.setSimpleAlg(f'hidden mode pass is code {self.pass_gate.getCodeEvent()}')
+
+        if len(ear) == 0:
+            return
+        if self.funnel.funnel(ear) == "bye":
+            gate_open = self.pass_gate.isOpen()
+            if gate_open:
+                self.pass_gate.closeGate()
+                self.setSimpleAlg("discreet mode engaged")
+                self.algPartsFusion(4,
+                    APSkillsRemover(self.brain, *self.hidden_skills),
+                    APSkillsAdder(self.brain, *self.negation_skills))
+            else:
+                self.setSimpleAlg("discreet mode already engaged")
+
+        if self.reset_gate.trigger():
+            self.pass_gate.resetAttempts()
+
+        if not self.pass_gate.isOpen():
+            self.pass_gate.openGate(ear)
+            if self.pass_gate.isOpen():
+                self.setSimpleAlg("hidden mode successfully engaged")
+                self.algPartsFusion(4,
+                    APSkillsRemover(self.brain, *self.negation_skills),
+                    APSkillsAdder(self.brain, *self.hidden_skills))
+        else:
+            if self.pass_gate.codeUpdate(ear):
+                self._kokoro.grimoireMemento.save(f"{self.skill_name}_code", str(self.pass_gate.getCodeEvent()))
+                self.setSimpleAlg("bond code updated")
+
+    def skillNotes(self, param: str) -> str:
+        if param == "notes":
+            return "swap sets of opposite skills"
+        elif param == "triggers":
+            return f"code number, close gate, bye"
+        return "note unavailable"
+
+
+class DiNothing(Skill):
+    """A skill that does absolutely nothing."""
+
+    def __init__(self):
+        super().__init__()
+
+
+class AHReequip(Skill):
+    """Equips a skill as needed. when user ends sentence with please
+        learnability of request to skill is weighted with: lame/thanks,good/wrong
+    """
+
+    def __init__(self, brain: Brain):
+        super().__init__()
+        self.brain = brain
+        self.skills: dict[str, Skill] = {}
+        self.skill_names: set[str] = set()
+        self.active_skill = DiNothing()
+        self.active_key = "default"
+
+        self.learner = AXLearnability(tolerance=3)
+        self.learner.defcons.add("lame")
+        self.learner.goals.update(["thanks", "good"])
+        self.learner.defcon5.add("wrong")
+
+    def manifest(self):
+        for key in self.skills:
+            memory_key = f"{self.skill_name}_{key}"
+            loaded_skill = self._kokoro.grimoireMemento.load(memory_key)
+            if loaded_skill and loaded_skill != "null" and loaded_skill in self.skills:
+                self.skills[key] = self.skills[loaded_skill]
+
+    def manual_skill_add(self, skill: Skill, *keys: str) -> "AHReequip":
+        self.add_skill(skill)
+        for key in keys:
+            self.skills[key] = skill
+        return self
+
+    def get_random_skill(self) -> Skill:
+        if not self.skills:
+            return DiNothing()
+        random_skill_name = random.choice(list(self.skill_names))
+        return self.skills[random_skill_name]
+
+    def add_skill(self, skill: Skill) -> "AHReequip":
+        self.skills[skill.skill_name] = skill
+        self.skill_names.add(skill.skill_name)
+        return self
+
+    def input(self, ear: str, skin: str, eye: str):
+        if ear.endswith("please"):
+            self._handle_reequip_request(ear)
+            return
+        if self.learner.mutateSkill(ear):
+            self._handle_skill_mutation()
+
+    def _handle_reequip_request(self, ear: str):
+        skill_key = ear.replace("please", "").strip()
+        if skill_key not in self.skills:
+            self._load_skill_from_memory(skill_key)
+        self._equip_skill(skill_key)
+        self.learner.pendAlgWithoutConfirmation()
+        self.setSimpleAlg(f"{self.active_skill.skill_name} skill equipped")
+
+    def _load_skill_from_memory(self, skill_key: str):
+        memory_key = f"{self.skill_name}_{skill_key}"
+        loaded_skill = self._kokoro.grimoireMemento.load(memory_key)
+        if loaded_skill and loaded_skill != "null" and loaded_skill in self.skills:
+            self.skills[skill_key] = self.skills[loaded_skill]
+            print(f"Loaded skill {loaded_skill} for the key cmd: {skill_key}")
+        else:
+            self.skills[skill_key] = self.get_random_skill()
+
+    def _handle_skill_mutation(self):
+        old_skill = self.active_skill
+        new_skill = self.get_random_skill()
+        self.skills[self.active_key] = new_skill
+        memory_key = f"{self.skill_name}_{self.active_key}"
+        self._kokoro.grimoireMemento.save(memory_key, new_skill.skill_name)
+        self.active_skill = new_skill
+        self.algPartsFusion(4,
+            APSkillRemover(self.brain, old_skill),
+            APSkillAdder(self.brain, new_skill))
+        self.setSimpleAlg(f"{self.active_skill.skill_name} skill reequipped")
+        self.learner.pendAlgWithoutConfirmation()
+
+    def _equip_skill(self, skill_key: str):
+        old_skill = self.active_skill
+        self.active_skill = self.skills[skill_key]
+        self.active_key = skill_key
+        self.algPartsFusion(4,
+            APSkillRemover(self.brain, old_skill),
+            APSkillAdder(self.brain, self.active_skill))
+
+
+class AHDebuff(Skill):
+    """unplugs its skills from the AI for a period of time"""
+
+    def __init__(self, brain: Brain, debuff_minutes: int = 30):
+        super().__init__()
+        self.brain = brain
+        self.skills: set[Skill] = set()
+        self.funnel: AXFunnel = AXFunnel()
+        self.funnel.setDefault("debuff")
+        self.funnel.addK("shut up").addK("chill").addK("quite")
+        self.tg = TimeGate(debuff_minutes)
+        self.debuffed: bool = False
+
+    def add_skill(self, skill: Skill) -> "AHDebuff":
+        if skill.get_skill_type() != 2:
+            self.skills.add(skill)
+        return self
+
+    def manifest(self):
+        for skill in self.skills:
+            self.brain.add_skill(skill)
+
+    def input(self, ear: str, skin: str, eye: str):
+        if self.funnel.funnel(ear) == "debuff" and not self.debuffed:
+            self.debuffed = True
+            self.algPartsFusion(4, APSkillsRemover(self.brain, *self.skills))
+            self.tg.openForPauseMinutes()
+            self.setSimpleAlg("debuffing")
+            return
+        if ear == "buff":
+            self.debuffed = False
+            self.tg.close()
+            self.algPartsFusion(4, APSkillsAdder(self.brain, *self.skills))
+            return
+        if self.debuffed:
+            if self.tg.isClosed():
+                self.debuffed = False
+                self.setSimpleAlg("buffing")
+                self.algPartsFusion(4, APSkillsAdder(self.brain, *self.skills))
+
+
+class LobeUnlocked:
+    # exposes Lobe skill list attributes
+    def __init__(self, base: Lobe):
+        self.base = base
+
+    def get_type1_skills(self) -> list[Skill]:
+        return self.base.dClasses
+
+    def get_type2_skills(self) -> list[Skill]:
+        return self.base.cts_skills
+
+
+class APHibernate(AlgPart):
+    # this alg part removes all skills from the brain object except the anchor skill
+    def __init__(self, anchor: Skill, brain: Brain):
+        super().__init__()
+        self.brain = brain
+        self.logic_lobe: LobeUnlocked = LobeUnlocked(brain.logicLobe)
+        self.hardware_lobe: LobeUnlocked = LobeUnlocked(brain.hardwareLobe)
+        self.ear_lobe: LobeUnlocked = LobeUnlocked(brain.ear)
+        self.skin_lobe: LobeUnlocked = LobeUnlocked(brain.skin)
+        self.eye_lobe: LobeUnlocked = LobeUnlocked(brain.eye)
+        self.skill = anchor
+        self.done = False
+
+    @staticmethod
+    def clr_lobe(lobe: LobeUnlocked):
+        lobe.get_type1_skills().clear()
+        lobe.get_type2_skills().clear()
+
+    def action(self, ear: str, skin: str, eye: str) -> str:
+        self.clr_lobe(self.logic_lobe)
+        self.clr_lobe(self.hardware_lobe)
+        self.clr_lobe(self.ear_lobe)
+        self.clr_lobe(self.skin_lobe)
+        self.clr_lobe(self.eye_lobe)
+        self.brain.add_skill(self.skill)
+        self.done = True
+        return "all skills nuked"
+
+    def completed(self) -> bool:
+        return self.done
+
+
+class APImprintEngram(AlgPart):
+    # the skills stored in the engram are added to the brain obj
+    def __init__(self, engram: BrainEngram, brain: Brain):
+        super().__init__()
+        self.brain = brain
+        self.engram = engram
+        self.done = False
+
+    def action(self, ear: str, skin: str, eye: str) -> str:
+        self.engram.imprint_brain_engram(self.brain)
+        self.done = True
+        return "soul shard reactivated"
+
+    def completed(self) -> bool:
+        return self.done
+
+
+class Engram:
+    # storage of personality construct (skill sets)
+    def __init__(self, lobe: Lobe):
+        temp: LobeUnlocked = LobeUnlocked(lobe)
+        self.skills: list[Skill] = list(temp.get_type1_skills())
+        self.cts_skills: list[Skill] = list(temp.get_type2_skills())
+
+    def imprint_engram(self, lobe: Lobe):
+        for skill in self.skills:
+            print(f'now readding {skill.skill_name}')
+            lobe.add_skill(skill)
+        for skill in self.cts_skills:
+            print(f'now readding {skill.skill_name}')
+            lobe.add_skill(skill)
+
+    def remove_skill(self, skill: Skill):
+        while skill in self.skills:
+            self.skills.remove(skill)
+        while skill in self.cts_skills:
+            self.cts_skills.remove(skill)
+
+
+class BrainEngram:
+    # full storage of full personality construct (skill sets)
+    def __init__(self, brain: Brain):
+        self.logic_engram: Engram = Engram(brain.logicLobe)
+        self.hardware_engram: Engram = Engram(brain.hardwareLobe)
+        self.ear_engram: Engram = Engram(brain.ear)
+        self.skin_engram: Engram = Engram(brain.skin)
+        self.eye_engram: Engram = Engram(brain.eye)
+
+    def imprint_brain_engram(self, brain: Brain):
+        self.logic_engram.imprint_engram(brain.logicLobe)
+        self.hardware_engram.imprint_engram(brain.hardwareLobe)
+        self.ear_engram.imprint_engram(brain.ear)
+        self.skin_engram.imprint_engram(brain.skin)
+        self.eye_engram.imprint_engram(brain.eye)
+
+    def remove_skill(self, skill: Skill):
+        self.logic_engram.remove_skill(skill)
+        self.hardware_engram.remove_skill(skill)
+        self.skin_engram.remove_skill(skill)
+
+
+class AHHibernate(Skill):
+    """a container skill: it adds its skills to the brain on manifest. on "hibernate"
+    (or after standby idle time) it removes its skills for a hibernation period, then
+    brings them back (edo tensei) on "wake up" or when the timer ends.
+    skills that are not its own are never touched
+    """
+    """
+    hib = AHHibernate(brain).add_skill(DiHelloWorld(), SomeOtherSkill())
+    brain.add_skill(hib)
+    """
+    def __init__(self, brain: Brain, hibernation_minutes=30, standby_minutes=40):
+        super().__init__()
+        self.brain = brain
+        self.skills: list[Skill] = []
+        self.hibernating = False
+        self.tg: TimeGate = TimeGate(hibernation_minutes)
+        self.standby: AXStandBy = AXStandBy(standby_minutes)
+
+    def add_skill(self, *skills: Skill) -> "AHHibernate":
+        for skill in skills:
+            if skill is not self and skill not in self.skills:
+                self.skills.append(skill)
+        return self
+
+    def manifest(self):
+        # add my skills to the brain
+        for skill in self.skills:
+            if not self.brain.contains_skill(skill):
+                self.brain.add_skill(skill)
+
+    def ghost(self):
+        # I am being removed, my skills go with me
+        for skill in self.skills:
+            self.brain.remove_skill(skill)
+
+    def input(self, ear: str, skin: str, eye: str):
+        if not self.hibernating:
+            if ear == "hibernate" or self.standby.standBy(ear):
+                # ===================== HIBERNATION STARTS HERE =====================
+                self.hibernating = True
+                self.tg.openForPauseMinutes()
+                self.algPartsFusion(4, APSkillsRemover(self.brain, *self.skills),APVerbatim("hibernating"))
+                # ===================================================================
+        else:
+            if self.tg.isClosed() or len(ear)>0:
+                # ===================== HIBERNATION ENDS HERE =======================
+                self.hibernating = False
+                self.algPartsFusion(4, APAddUniqueSkills(self.brain, *self.skills))
+                # ===================================================================
+
+    def skillNotes(self, param: str) -> str:
+        if param == "notes":
+            return "hibernates its own skills to save resources, wakes them on command or timer"
+        elif param == "triggers":
+            return "hibernate, wake up, or idle standby"
+        return "note unavailable"
+
+
+class AHBuff(Skill):
+    """
+    when skill set key is spoken its skill set is added to the brain for N minutes
+    example use: fun speech patterns
+    """
+    def __init__(self, brain: Brain, buff_minutes=10):
+        super().__init__()
+        self.buffs: dict[str, list[Skill]] = {"chill": []}
+        self.active: str = "chill"
+        self.brain = brain
+        self.tg: TimeGate = TimeGate(buff_minutes)
+        self.buffed: bool = False
+
+    def manifest(self):
+        for skill in self.buffs["chill"]:
+            self.brain.add_skill(skill)
+
+    def add_skill_set(self, key: str, *skills: Skill) -> AHBuff:
+        if len(key) == 0:
+            return self
+        if key not in self.buffs:
+            self.buffs[key] = []
+        for skill in skills:
+            if skill.get_skill_type() != 2:
+                self.buffs[key].append(skill)
+        return self
+
+    def add_default_skills(self, *skills: Skill) -> AHBuff:
+        for skill in skills:
+            if skill.get_skill_type() != 2:
+                self.buffs["chill"].append(skill)
+        return self
+
+    def input(self, ear: str, skin: str, eye: str):
+        if not self.buffed and ear == "chill":
+            return
+        if ear in self.buffs:
+            self.buffed = True
+            if ear == "chill":
+                self.setSimpleAlg("chilling")
+            else:
+                self.tg.openForPauseMinutes()
+                self.setSimpleAlg("buffing")
+            self.algPartsFusion(4,
+                APSkillsRemover(self.brain, *self.buffs[self.active]),
+                APSkillsAdder(self.brain, *self.buffs[ear]))
+            self.active = ear
+            return
+        if self.buffed and self.tg.isClosed():
+            self.buffed = False
+            self.setSimpleAlg("chilling")
+            self.algPartsFusion(4,
+                APSkillsRemover(self.brain, *self.buffs[self.active]),
+                APSkillsAdder(self.brain, *self.buffs["chill"]))
+            self.active = "chill"
+
+
+class DiTest(Skill):
+    def __init__(self):
+        super().__init__()
+
+    def input(self, ear: str, skin: str, eye: str):
+        if ear == "hello":
+            self.setVerbatimAlg(4, "toasty test")
+
+    def skillNotes(self, param: str) -> str:
+        if param == "notes":
+            return "plain toasty test skill"
+        elif param == "triggers":
+            return "say hello"
+        return "note unavalible"
+
+
+class DiInstaller(Skill):
+    """
+    this skill lets you package a bunch of skills (do so in the subclass).
+    after adding them it removes itself from the brain.
+    the input method therefore never runs.
+    """
+    def __init__(self, brain: Brain):
+        super().__init__()
+        self.skills: list[Skill] = []
+        self.brain = brain
+
+    def manifest(self):
+        for skill in self.skills:
+            self.brain.add_skill(skill)
+        self.brain.remove_skill(self)
+
+
+class AHNagCooldown(Skill):
+    """a container skill: it adds its skills to the brain on manifest. when the same input
+    repeats back to back it warns, and if the nagging continues it removes its skills
+    for a cooldown period, then brings them back (edo tensei) and resets the counter.
+    skills that are not its own are never touched
+    """
+    def __init__(self, brain: Brain, cooldown_minutes=3, warn_at=4, hibernate_at=9):
+        super().__init__()
+        self.brain = brain
+        self.skills: list[Skill] = []
+        self.tg: TimeGate = TimeGate(cooldown_minutes)
+        self.warn_at = max(2, warn_at)  # clamp
+        self.hibernate_at = max(self.warn_at + 1, hibernate_at)  # always after the warning
+        self.hibernating = False
+        self._last_ear = ""
+        self._repeat_count = 0
+
+    def add_skill(self, *skills: Skill) -> "AHNagCooldown":
+        for skill in skills:
+            if skill is not self and skill not in self.skills:
+                self.skills.append(skill)
+        return self
+
+    @staticmethod
+    def _normalize(ear: str) -> str:
+        # "Nag!", "nag " and "NAG" all count as the same input
+        cleaned = "".join(c for c in ear.lower() if c.isalnum() or c.isspace())
+        return " ".join(cleaned.split())
+
+    def _count_repeats(self, ear: str) -> int:
+        # consecutive exact repeats, empty input is ignored
+        if not isinstance(ear, str):
+            return self._repeat_count
+        text = self._normalize(ear)
+        if text == "":
+            return self._repeat_count
+        if text == self._last_ear:
+            self._repeat_count += 1
+        else:
+            self._last_ear = text
+            self._repeat_count = 1
+        return self._repeat_count
+
+    def _reset_counter(self):
+        self._last_ear = ""
+        self._repeat_count = 0
+
+    def manifest(self):
+        # add my skills to the brain
+        for skill in self.skills:
+            if not self.brain.contains_skill(skill):
+                self.brain.add_skill(skill)
+
+    def ghost(self):
+        # I am being removed, my skills go with me
+        for skill in self.skills:
+            self.brain.remove_skill(skill)
+
+    def input(self, ear: str, skin: str, eye: str):
+        if not self.hibernating:
+            count = self._count_repeats(ear)
+            if count >= self.hibernate_at:
+                # ===================== HIBERNATION STARTS HERE =====================
+                self.hibernating = True
+                self._reset_counter()
+                self.tg.openForPauseMinutes()
+                # announce first, then remove my skills
+                self.algPartsFusion(4,
+                                    APVerbatim("I'm hibernating now, talk to you later"),
+                                    APSkillsRemover(self.brain, *self.skills))
+                # ===================================================================
+            elif count == self.warn_at:
+                # tier 1: warning, fires once at the threshold, nothing is removed
+                self.setSimpleAlg("stop repeating yourself")
+        else:
+            if self.tg.isClosed():
+                # ===================== HIBERNATION ENDS HERE =======================
+                self.hibernating = False
+                self._reset_counter()  # back to square one
+                # clear throat, then edo tensei my skills
+                self.algPartsFusion(4,
+                                    APVerbatim("ahem"),
+                                    APAddUniqueSkills(self.brain, *self.skills))
+                # ===================================================================
+
+    def skillNotes(self, param: str) -> str:
+        if param == "notes":
+            return "warns on repeated input, then hibernates its own skills for a cooldown"
+        elif param == "triggers":
+            return "repeat the same input back to back"
+        return "note unavailable"
+
+
+# ╔════════════════════════════════════════════════╗
+# ║              UNDERUSED / TEMPLATE SKILLS       ║
+# ╚════════════════════════════════════════════════╝
+
+
+class DiInstallerTest(DiInstaller):
+    def __init__(self, brain: Brain):
+        super().__init__(brain)
+        self.skills.append(DiTest())
+        self.skills.append(DiSysOut())
+
+    def input(self, ear: str, skin: str, eye: str):
+        self.setSimpleAlg("this does not run the skill is unequipped")
+
+
+# ╔════════════════════════════════════════════════╗
+# ║                GRAVEYARD SKILLS                ║
+# ╚════════════════════════════════════════════════╝
